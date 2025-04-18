@@ -1,91 +1,75 @@
-require('dotenv').config();
-const axios = require('axios');
-const TelegramBot = require('node-telegram-bot-api');
+require("dotenv").config();
+const TelegramBot = require("node-telegram-bot-api");
+const axios = require("axios");
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
-const ERC_API = process.env.ETHERSCAN_API_KEY;
-const BSC_API = process.env.BSCSCAN_API_KEY;
+const getEthBalance = async (address) => {
+  const url = \`https://api.etherscan.io/api?module=account&action=balance&address=\${address}&tag=latest&apikey=\${process.env.ETHERSCAN_API_KEY}\`;
+  const res = await axios.get(url);
+  return parseFloat(res.data.result) / 1e18;
+};
 
-// ERC20 & BEP20 token contracts
-const USDT_ERC20 = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
-const USDT_BEP20 = '0x55d398326f99059fF775485246999027B3197955';
+const getERC20USDT = async (address) => {
+  const url = \`https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=0xdAC17F958D2ee523a2206206994597C13D831ec7&address=\${address}&tag=latest&apikey=\${process.env.ETHERSCAN_API_KEY}\`;
+  const res = await axios.get(url);
+  return parseFloat(res.data.result) / 1e6;
+};
 
-bot.on('message', async (msg) => {
+const getBnbBalance = async (address) => {
+  const url = \`https://api.bscscan.com/api?module=account&action=balance&address=\${address}&apikey=\${process.env.BSCSCAN_API_KEY}\`;
+  const res = await axios.get(url);
+  return parseFloat(res.data.result) / 1e18;
+};
+
+const getBEP20USDT = async (address) => {
+  const url = \`https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0x55d398326f99059fF775485246999027B3197955&address=\${address}&tag=latest&apikey=\${process.env.BSCSCAN_API_KEY}\`;
+  const res = await axios.get(url);
+  return parseFloat(res.data.result) / 1e18;
+};
+
+const getLatestEthTx = async (address) => {
+  const url = \`https://api.etherscan.io/api?module=account&action=txlist&address=\${address}&sort=desc&apikey=\${process.env.ETHERSCAN_API_KEY}\`;
+  const res = await axios.get(url);
+  return res.data.result && res.data.result[0];
+};
+
+bot.on("message", async (msg) => {
+  const address = msg.text.trim();
   const chatId = msg.chat.id;
-  const text = msg.text.trim();
 
-  // Check if it's a valid ETH/BSC wallet
-  const walletRegex = /^0x[a-fA-F0-9]{40}$/;
-  if (!walletRegex.test(text)) return;
-
-  const address = text;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return;
 
   try {
-    const [ethBalance, ethTx, usdtERC, bnbBalance, usdtBEP] = await Promise.all([
+    const [eth, ercUsdt, bnb, bepUsdt, tx] = await Promise.all([
       getEthBalance(address),
-      getLatestEthTransaction(address),
-      getERC20Balance(address, USDT_ERC20),
+      getERC20USDT(address),
       getBnbBalance(address),
-      getBEP20Balance(address, USDT_BEP20)
+      getBEP20USDT(address),
+      getLatestEthTx(address)
     ]);
 
-    const message = `
-🔔 *Wallet Update*
+    const time = tx ? new Date(tx.timeStamp * 1000).toUTCString() : "N/A";
+    const txHash = tx ? tx.hash : "N/A";
 
-💼 Address: \`${address}\`
+    const message = \`🔔 Wallet Update
 
-🟣 ETH: ${ethBalance}
-💵 USDT (ERC20): ${usdtERC}
-🟡 BNB: ${bnbBalance}
-💵 USDT (BEP20): ${usdtBEP}
+💼 Address: \${address}
 
-🔁 *New ETH Tx Detected:*
-🆔 ${ethTx.hash}
-📅 ${new Date(ethTx.time * 1000).toUTCString()}
-    `;
+🟣 ETH: \${eth.toFixed(4)}
+💵 USDT (ERC20): \${ercUsdt.toFixed(2)}
+🟡 BNB: \${bnb.toFixed(4)}
+💵 USDT (BEP20): \${bepUsdt.toFixed(2)}
 
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+🔁 New ETH Tx Detected:
+🆔 \${txHash}
+📅 \${time}
+\`;
 
+    bot.sendMessage(chatId, message);
   } catch (err) {
-    console.error(err);
-    bot.sendMessage(chatId, "⚠️ Error fetching wallet data. Please try again.");
+    bot.sendMessage(chatId, "❌ Error fetching wallet details.");
+    console.error(err.message);
   }
 });
-
-// ETH balance
-async function getEthBalance(address) {
-  const url = `https://api.etherscan.io/api?module=account&action=balance&address=${address}&tag=latest&apikey=${ERC_API}`;
-  const res = await axios.get(url);
-  return (parseFloat(res.data.result) / 1e18).toFixed(4);
-}
-
-// ETH latest transaction
-async function getLatestEthTransaction(address) {
-  const url = `https://api.etherscan.io/api?module=account&action=txlist&address=${address}&page=1&offset=1&sort=desc&apikey=${ERC_API}`;
-  const res = await axios.get(url);
-  const tx = res.data.result[0];
-  return { hash: tx.hash, time: parseInt(tx.timeStamp) };
-}
-
-// ERC20 token balance
-async function getERC20Balance(address, token) {
-  const url = `https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=${token}&address=${address}&tag=latest&apikey=${ERC_API}`;
-  const res = await axios.get(url);
-  return (parseFloat(res.data.result) / 1e6).toFixed(2); // USDT decimals
-}
-
-// BNB balance
-async function getBnbBalance(address) {
-  const url = `https://api.bscscan.com/api?module=account&action=balance&address=${address}&apikey=${BSC_API}`;
-  const res = await axios.get(url);
-  return (parseFloat(res.data.result) / 1e18).toFixed(4);
-}
-
-// BEP20 token balance
-async function getBEP20Balance(address, token) {
-  const url = `https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=${token}&address=${address}&tag=latest&apikey=${BSC_API}`;
-  const res = await axios.get(url);
-  return (parseFloat(res.data.result) / 1e18).toFixed(2); // USDT on BEP20 has 18 decimals
-}
 
